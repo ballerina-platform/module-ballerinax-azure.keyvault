@@ -17,6 +17,7 @@
 // Rotates a secret: stores a new value as a new version, then disables every older
 // version so that only the freshly rotated value remains usable.
 
+import ballerina/http;
 import ballerina/io;
 import ballerinax/azure.keyvault;
 
@@ -41,12 +42,20 @@ public function main() returns error? {
     string currentVersion = versionOf(currentId);
     io:println("Stored new version: ", currentVersion);
 
-    // Step 2: list every version of the secret.
-    keyvault:SecretListResult versions = check keyVault->listSecretVersions(secretName,
+    // Step 2: list every version of the secret, following nextLink until the last page.
+    keyvault:SecretListResult page = check keyVault->listSecretVersions(secretName,
         apiVersion = API_VERSION, maxresults = 25);
+    keyvault:SecretItem[] versions = page?.value ?: [];
+    string? nextLink = page?.nextLink;
+    while nextLink is string && nextLink != "" {
+        page = check nextPage(nextLink);
+        keyvault:SecretItem[] more = page?.value ?: [];
+        versions.push(...more);
+        nextLink = page?.nextLink;
+    }
 
     // Step 3: disable each older version that is still enabled.
-    foreach keyvault:SecretItem item in versions?.value ?: [] {
+    foreach keyvault:SecretItem item in versions {
         string? id = item?.id;
         if id is () {
             continue;
@@ -70,4 +79,17 @@ public function main() returns error? {
 function versionOf(string id) returns string {
     int? slash = id.lastIndexOf("/");
     return slash is int ? id.substring(slash + 1) : id;
+}
+
+// Fetches the page a Key Vault `nextLink` points to. The link is an absolute URL that
+// carries the skip token, and the client has no operation for it, so request it directly
+// with the same bearer token.
+function nextPage(string nextLink) returns keyvault:SecretListResult|error {
+    int? scheme = nextLink.indexOf("://");
+    int? pathStart = scheme is int ? nextLink.indexOf("/", scheme + 3) : ();
+    if pathStart is () {
+        return error(string `unexpected nextLink: ${nextLink}`);
+    }
+    http:Client pager = check new (nextLink.substring(0, pathStart), {auth: {token}});
+    return pager->get(nextLink.substring(pathStart));
 }

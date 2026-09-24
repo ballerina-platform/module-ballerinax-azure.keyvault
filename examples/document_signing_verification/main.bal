@@ -18,6 +18,7 @@
 // document is hashed locally; only the SHA-256 digest is sent to the vault.
 
 import ballerina/crypto;
+import ballerina/http;
 import ballerina/io;
 import ballerina/lang.array;
 import ballerinax/azure.keyvault;
@@ -33,12 +34,22 @@ const API_VERSION = "7.0";
 public function main() returns error? {
     keyvault:Client keyVault = check new ({auth: {token}}, keyVaultUrl);
 
-    // Step 1: find the newest enabled version of the signing key.
-    keyvault:KeyListResult versions = check keyVault->listKeyVersions(signingKeyName,
+    // Step 1: list every version of the signing key, following nextLink until the last page.
+    keyvault:KeyListResult page = check keyVault->listKeyVersions(signingKeyName,
         apiVersion = API_VERSION);
+    keyvault:KeyItem[] versions = page?.value ?: [];
+    string? nextLink = page?.nextLink;
+    while nextLink is string && nextLink != "" {
+        page = check nextPage(nextLink);
+        keyvault:KeyItem[] more = page?.value ?: [];
+        versions.push(...more);
+        nextLink = page?.nextLink;
+    }
+
+    // Step 2: pick the newest enabled version.
     string keyVersion = "";
     int newest = 0;
-    foreach keyvault:KeyItem item in versions?.value ?: [] {
+    foreach keyvault:KeyItem item in versions {
         int created = item?.attributes?.created ?: 0;
         string? kid = item?.kid;
         if kid is string && item?.attributes?.enabled == true && created >= newest {
@@ -51,19 +62,19 @@ public function main() returns error? {
         return error(string `no enabled version of key '${signingKeyName}' found`);
     }
 
-    // Step 2: confirm the key type before choosing an algorithm.
+    // Step 3: confirm the key type before choosing an algorithm.
     keyvault:KeyBundle signingKey = check keyVault->getKey(signingKeyName, keyVersion,
         apiVersion = API_VERSION);
     io:println("Signing with ", signingKey?.key?.kid, " (", signingKey?.key?.kty, ")");
 
-    // Step 3: sign the SHA-256 digest of the document.
+    // Step 4: sign the SHA-256 digest of the document.
     string digest = base64Url(crypto:hashSha256(document.toBytes()));
     keyvault:KeyOperationResult signature = check keyVault->sign(signingKeyName, keyVersion,
         {alg: "RS256", value: digest}, apiVersion = API_VERSION);
     string signatureValue = signature?.value ?: "";
     io:println("Signature: ", signatureValue);
 
-    // Step 4: verify the signature against the same digest.
+    // Step 5: verify the signature against the same digest.
     keyvault:KeyVerifyResult result = check keyVault->verify(signingKeyName, keyVersion,
         {alg: "RS256", digest, value: signatureValue}, apiVersion = API_VERSION);
     io:println("Signature valid: ", result?.value);
@@ -83,4 +94,17 @@ function base64Url(byte[] data) returns string {
         }
     }
     return out;
+}
+
+// Fetches the page a Key Vault `nextLink` points to. The link is an absolute URL that
+// carries the skip token, and the client has no operation for it, so request it directly
+// with the same bearer token.
+function nextPage(string nextLink) returns keyvault:KeyListResult|error {
+    int? scheme = nextLink.indexOf("://");
+    int? pathStart = scheme is int ? nextLink.indexOf("/", scheme + 3) : ();
+    if pathStart is () {
+        return error(string `unexpected nextLink: ${nextLink}`);
+    }
+    http:Client pager = check new (nextLink.substring(0, pathStart), {auth: {token}});
+    return pager->get(nextLink.substring(pathStart));
 }

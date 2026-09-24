@@ -25,6 +25,8 @@ configurable string keyVaultUrl = ?;
 configurable string token = ?;
 configurable string certificateName = ?;
 configurable string subject = ?;
+// The DNS name the certificate is issued for; match it to the CN in `subject`
+configurable string dnsName = ?;
 
 const API_VERSION = "7.0";
 
@@ -34,9 +36,14 @@ public function main() returns error? {
     // Step 1: request a self-signed certificate valid for 12 months.
     keyvault:CertificateOperation operation = check keyVault->createCertificate(certificateName, {
         policy: {
-            keyProps: {exportable: true, kty: "RSA", keySize: 2048, reuseKey: false},
+            keyProps: {exportable: false, kty: "RSA", keySize: 2048, reuseKey: false},
             secretProps: {contentType: "application/x-pkcs12"},
-            x509Props: {subject, validityMonths: 12, keyUsage: ["digitalSignature", "keyEncipherment"]},
+            x509Props: {
+                subject,
+                sans: {dnsNames: [dnsName]},
+                validityMonths: 12,
+                keyUsage: ["digitalSignature", "keyEncipherment"]
+            },
             issuer: {name: "Self"}
         }
     }, apiVersion = API_VERSION);

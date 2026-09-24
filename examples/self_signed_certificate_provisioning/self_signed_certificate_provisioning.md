@@ -17,6 +17,7 @@ keyVaultUrl = "https://<vault-name>.vault.azure.net"
 token = "<access-token>"
 certificateName = "<certificate-name>"
 subject = "CN=www.contoso.com"
+dnsName = "www.contoso.com"
 ```
 
 ## Run the example
