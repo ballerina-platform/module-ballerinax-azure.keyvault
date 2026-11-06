@@ -183,7 +183,7 @@ public type UpdateCertificateIssuerQueries record {
 @display {label: "Connection Config"}
 public type ConnectionConfig record {|
     # Configurations related to client authentication
-    http:BearerTokenConfig auth;
+    OAuth2ClientCredentialsGrantConfig|http:BearerTokenConfig|OAuth2RefreshTokenGrantConfig auth;
     # The HTTP version understood by the client
     http:HttpVersion httpVersion = http:HTTP_2_0;
     # Configurations related to HTTP/1.x protocol
@@ -948,6 +948,13 @@ public type RecoverDeletedSecretQueries record {
     string apiVersion;
 };
 
+# OAuth2 Client Credentials Grant Configs
+public type OAuth2ClientCredentialsGrantConfig record {|
+    *http:OAuth2ClientCredentialsGrantConfig;
+    # Token URL
+    string tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+|};
+
 # Represents the Queries record for the operation: verify
 public type VerifyQueries record {
     # Client API version
@@ -1379,6 +1386,13 @@ public type CertificateIssuerItem record {
     # Certificate Identifier
     string id?;
 };
+
+# OAuth2 Refresh Token Grant Configs
+public type OAuth2RefreshTokenGrantConfig record {|
+    *http:OAuth2RefreshTokenGrantConfig;
+    # Refresh URL
+    string refreshUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+|};
 
 # Represents the Queries record for the operation: getCertificate
 public type GetCertificateQueries record {

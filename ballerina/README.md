@@ -14,37 +14,68 @@ The Azure Key Vault connector exposes the Key Vault data-plane REST API to Balle
 
 ## Setup guide
 
-To use the Azure Key Vault connector, you need a key vault, permission to use it, and a Microsoft Entra ID access token issued for Key Vault.
+To use the Azure Key Vault connector, you need a key vault, permission to use it, and an application registered in Microsoft Entra ID.
 
-1. Sign in to the [Azure portal](https://portal.azure.com/) with an account that has an active subscription.
+### Step 1: Sign in to the Azure portal
 
-2. Create a key vault: search for **Key vaults**, select **Create**, choose a subscription, resource group, region and a globally unique vault name, and create it. Note the **Vault URI** on the vault's **Overview** page, for example `https://<vault-name>.vault.azure.net`. The connector sends every request to this URI.
+1. Go to the [Azure portal](https://portal.azure.com/).
+2. Sign in with an account that has an active subscription.
 
-3. Grant the identity that will call the vault access to its data plane. On a vault that uses Azure role-based access control, open **Access control (IAM)** and assign the roles the program needs, such as **Key Vault Secrets Officer**, **Key Vault Crypto Officer** or **Key Vault Certificates Officer**. On a vault that uses access policies, add an access policy with the matching key, secret and certificate permissions instead.
+### Step 2: Create a key vault
 
-4. Obtain an access token for the `https://vault.azure.net` resource. For local development, sign in with the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) and run:
+1. Search for **Key vaults** and select **Create**.
+2. Choose a subscription, resource group, region and a globally unique vault name.
+3. Create the vault.
+4. Note the **Vault URI** on the vault's **Overview** page, for example `https://<vault-name>.vault.azure.net`. The connector sends every request to this URI.
 
-    ```bash
-    az account get-access-token --resource https://vault.azure.net --query accessToken --output tsv
+### Step 3: Grant data-plane access
+
+1. On a vault that uses Azure role-based access control, open the vault's **Access control (IAM)** page.
+2. Assign the roles the program needs to the user account that will sign in during Step 4, for example:
+    - **Key Vault Secrets Officer** to manage secrets
+    - **Key Vault Crypto Officer** to manage keys and use them for cryptographic operations
+    - **Key Vault Certificates Officer** to manage certificates
+
+On a vault that uses access policies, add an access policy with the matching key, secret and certificate permissions instead.
+
+### Step 4: Obtain a refresh token
+
+The connector authenticates with an OAuth 2.0 refresh token from Microsoft Entra ID and renews its access token automatically.
+
+1. In the Azure portal, open the app launcher and select **Entra**.
+
+    ![Open Microsoft Entra from the Azure portal](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/azure-portal.png)
+
+2. Go to **App registrations** > **New registration**. Enter a name, choose the supported account types, add `https://jwt.ms` as a **Web** redirect URI, and select **Register**.
+
+    ![Open App registrations in Microsoft Entra](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/entra-main-page.png)
+
+3. On the application's **Overview** page, note the **Application (client) ID** and the **Directory (tenant) ID**.
+4. Go to **Certificates & secrets** > **New client secret**, add a secret, and copy its **Value**. The value is shown only once.
+
+    ![Create a client secret](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/add-client-secret.png)
+
+5. Go to **API permissions** > **Add a permission** > **Azure Key Vault**, select the delegated **user_impersonation** permission, and select **Add permissions**. Grant admin consent if your tenant requires it.
+6. Open the following URL in a browser, with your tenant ID and client ID, and sign in with the user account that has the role from Step 3:
+
+    ```text
+    https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/authorize?client_id=<client-id>&response_type=code&redirect_uri=https%3A%2F%2Fjwt.ms&response_mode=query&scope=https%3A%2F%2Fvault.azure.net%2Fuser_impersonation%20offline_access
     ```
 
-    For an unattended service, use an application registered in Microsoft Entra ID:
+7. Accept the consent prompt. The browser opens `https://jwt.ms/?code=<authorization-code>`. Copy the `code` value, which is single-use and expires within minutes.
+8. Exchange the code for a refresh token:
 
-    1. In the Azure portal, open the app launcher and select **Entra**.
+    ```bash
+    curl -X POST "https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token" \
+      --data-urlencode "client_id=<client-id>" \
+      --data-urlencode "client_secret=<client-secret>" \
+      --data-urlencode "scope=https://vault.azure.net/user_impersonation offline_access" \
+      --data-urlencode "code=<authorization-code>" \
+      --data-urlencode "redirect_uri=https://jwt.ms" \
+      --data-urlencode "grant_type=authorization_code"
+    ```
 
-        ![Open Microsoft Entra from the Azure portal](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/azure-portal.png)
-
-    2. Select **App registrations**, then **New registration**. Give the application a name, choose **Accounts in this organizational directory only**, and register it. Note the **Application (client) ID** and **Directory (tenant) ID** on its **Overview** page.
-
-        ![Open App registrations in Microsoft Entra](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/entra-main-page.png)
-
-    3. Open **Certificates & secrets**, select **New client secret**, and copy the secret's **Value** as soon as it is created. It is shown only once.
-
-        ![Create a client secret](https://raw.githubusercontent.com/ballerina-platform/module-ballerinax-azure.keyvault/main/docs/resources/add-client-secret.png)
-
-    4. Grant the application's service principal access to the vault as in step 3, then request a token with the OAuth 2.0 client credentials flow from `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token`, using the scope `https://vault.azure.net/.default`.
-
-> **Note:** The connector authenticates with a bearer token and does not refresh it. Access tokens expire, typically after about an hour, so a long-running program must obtain a fresh token and create a new client when the token expires.
+9. Copy the `refresh_token` value from the JSON response.
 
 ## Quickstart
 
@@ -60,20 +91,36 @@ import ballerinax/azure.keyvault;
 
 ### Step 2: Instantiate a new connector
 
-Create a `keyvault:Client` with the vault URI and an access token.
+Create a `keyvault:Client` with the vault URI and the credentials from step 4 of the setup guide.
 
 ```ballerina
 configurable string keyVaultUrl = ?;
-configurable string token = ?;
+configurable string tenantId = ?;
+configurable string clientId = ?;
+configurable string clientSecret = ?;
+configurable string refreshToken = ?;
 
-final keyvault:Client keyVault = check new ({auth: {token}}, keyVaultUrl);
+final keyvault:Client keyVault = check new ({
+    auth: {
+        clientId,
+        clientSecret,
+        refreshToken,
+        refreshUrl: string `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+        scopes: ["https://vault.azure.net/user_impersonation", "offline_access"]
+    }
+}, keyVaultUrl);
 ```
+
+> **Note:** The connector's default token URL is the multi-tenant `https://login.microsoftonline.com/common/oauth2/v2.0/token` endpoint. It works only for applications that accept accounts from any organization, so change it to your tenant's endpoint, as `refreshUrl` does above.
 
 Provide the values in a `Config.toml` file:
 
 ```toml
 keyVaultUrl = "https://<vault-name>.vault.azure.net"
-token = "<access-token>"
+tenantId = "<tenant-id>"
+clientId = "<client-id>"
+clientSecret = "<client-secret>"
+refreshToken = "<refresh-token>"
 ```
 
 ### Step 3: Invoke the connector operation
