@@ -1,6 +1,6 @@
-_Author_: @DimuthuMadushan \
+_Author_:  @DimuthuMadushan \
 _Created_: 2026/09/23 \
-_Updated_: 2026/09/23 \
+_Updated_: 2026/11/06 \
 _Edition_: Swan Lake
 
 # Sanitation for OpenAPI specification
@@ -9,15 +9,17 @@ This document records the sanitation done on top of the official OpenAPI specifi
 The OpenAPI specification is obtained from the [Azure Key Vault 7.0-preview specification](https://github.com/wso2/api-specs/blob/main/openapi/azure/keyvault/7.0-preview/openapi.json) (`openapi/azure/keyvault/7.0-preview/openapi.json` in `api-specs`), which is the upstream `KeyVaultClient` Swagger 2.0 document.
 These changes are done in order to improve the overall usability, and as workarounds for some known language limitations.
 
-1. **Added the `azure_auth` security scheme** (applied to `docs/spec/openapi.json`, before flatten and align)
+1. **Added the Microsoft Entra ID OAuth 2.0 security schemes** (applied to `docs/spec/openapi.json`, before flatten and align)
 
    **Location**: top level — `securityDefinitions` and `security`
 
    **Original**: The specification declared no security scheme. The upstream document relies on AutoRest's host-side authentication, so the generated `ConnectionConfig` had no `auth` field.
 
-   **Updated**: Added an `azure_auth` OAuth 2.0 scheme (implicit flow, authorization URL `https://login.microsoftonline.com/common/oauth2/authorize`, scope `user_impersonation`) and a top-level `security: [{"azure_auth": ["user_impersonation"]}]`. This is the same scheme the previously published connector (`ballerinax/azure.keyvault` 1.6.1) declared.
+   **Updated**: Added two OAuth 2.0 schemes against the Microsoft identity platform v2.0 endpoints, with `https://login.microsoftonline.com/common/oauth2/v2.0/token` as the token URL:
+   - `azure_auth` — `accessCode` (authorization code) flow, authorization URL `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`, scopes `https://vault.azure.net/user_impersonation` and `offline_access`, for delegated access with a refresh token.
+   - `azure_auth_app` — `application` (client credentials) flow, scope `https://vault.azure.net/.default`, for app-only access.
 
-   **Reason**: Every Key Vault data-plane call needs a Microsoft Entra ID bearer token. With the scheme in place, the generated `ConnectionConfig` carries `http:BearerTokenConfig auth`.
+   **Reason**: Every Key Vault data-plane call needs a Microsoft Entra ID token issued for Key Vault. The implicit flow that the previously published connector (`ballerinax/azure.keyvault` 1.6.1) declared has no token URL, so the generated `ConnectionConfig` could only take a bearer token that the caller has to renew. With these flows it carries `OAuth2ClientCredentialsGrantConfig|http:BearerTokenConfig|OAuth2RefreshTokenGrantConfig auth`, the same options as the Azure Data Lake connector, and the connector renews tokens itself. The generated `tokenUrl` and `refreshUrl` default to the `common` endpoint. The client credentials flow needs a tenant-specific endpoint, so callers override the default, as the README describes.
 
 2. **Moved `properties` declared beside `allOf` into the `allOf`** (applied to `docs/spec/openapi.json`, under `definitions`, before flatten and align)
 
